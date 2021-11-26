@@ -380,15 +380,21 @@ def run_backend(
         "No tool was supplied on command line or found in '{}' core description"
     )
     core = _get_core(cm, system)
+
+    flow = core.get_flow(flags)
     try:
         tool = core.get_tool(flags)
     except SyntaxError as e:
         logger.error(str(e))
         exit(1)
-    if not tool:
-        logger.error(tool_error.format(system))
-        exit(1)
-    flags["tool"] = tool
+
+    if tool:
+        flags["tool"] = tool
+    else:
+        if not flow:
+            logger.error(tool_error.format(system))
+            exit(1)
+
     build_root = build_root_arg or os.path.join(
         cm.config.build_root, core.name.sanitized_name
     )
@@ -406,11 +412,25 @@ def run_backend(
     if not os.path.exists(eda_api_file):
         do_configure = True
 
-    try:
-        backend_class = get_edatool(tool)
-    except ImportError:
-        logger.error(f"Backend {tool!r} not found")
-        exit(1)
+    backend_class = None
+    if flow:
+        try:
+            from edalize import get_flow
+
+            backend_class = get_flow(flow)
+        except ModuleNotFoundError:
+            logger.error(f"Flow {flow!r} not found")
+            exit(1)
+        except ImportError:
+            logger.error("Selected Edalize version does not support the flow API")
+            exit(1)
+
+    else:
+        try:
+            backend_class = get_edatool(tool)
+        except ImportError:
+            logger.error(f"Backend {tool!r} not found")
+            exit(1)
 
     edalizer = Edalizer(
         toplevel=core.name,
@@ -444,7 +464,6 @@ def run_backend(
 
     try:
         backend = backend_class(edam=edam, work_root=work_root, verbose=verbose)
-
     except RuntimeError as e:
         logger.error(str(e))
         exit(1)
@@ -454,7 +473,10 @@ def run_backend(
 
     if do_configure:
         try:
-            backend.configure([])
+            if flow:
+                backend.configure()
+            else:
+                backend.configure([])
             print("")
         except RuntimeError as e:
             logger.error("Failed to configure the system")
